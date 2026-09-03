@@ -318,10 +318,8 @@ function icon(name) {
 }
 
 function coverHtml(title, artist, src, cls = "") {
-  if (src) return `<div class="cover ${cls}"><img alt="" src="${escapeHtml(src)}"></div>`;
-  const pal = coverColor(title, artist);
-  const letter = (title || "A").trim().charAt(0).toUpperCase() || "A";
-  return `<div class="cover ${cls}" style="background:${pal.bg};color:${pal.fg}">${escapeHtml(letter)}</div>`;
+  if (!src) return "";
+  return `<div class="cover ${cls}"><img alt="" src="${escapeHtml(src)}"></div>`;
 }
 
 function emptyBox(title, body, cta, action) {
@@ -456,6 +454,47 @@ function addArtist({ name, genre, sourceUrl, sucks }) {
   persist();
   return id;
 }
+
+function parseArtistCsv(text) {
+  const rows = [];
+  let row = [], field = "", inQ = false;
+  const pushField = () => { row.push(field); field = ""; };
+  const pushRow = () => { if (row.some((c) => c.trim())) rows.push(row); row = []; };
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i], next = text[i + 1];
+    if (inQ) {
+      if (ch === '"' && next === '"') { field += '"'; i++; }
+      else if (ch === '"') inQ = false;
+      else field += ch;
+    } else if (ch === '"') inQ = true;
+    else if (ch === ",") pushField();
+    else if (ch === "\n" || ch === "\r") {
+      if (ch === "\r" && next === "\n") i++;
+      pushField(); pushRow();
+    } else field += ch;
+  }
+  if (field.length || row.length) { pushField(); pushRow(); }
+  if (!rows.length) return { added: [], skipped: [] };
+  const header = rows[0].map((h) => h.trim().toLowerCase());
+  const nameI = header.findIndex((h) => h === "artist name" || h === "artist" || h === "name");
+  const genreI = header.findIndex((h) => h === "genre");
+  if (nameI < 0) return { added: [], skipped: [], error: "Need an Artist Name column" };
+  const added = [], skipped = [];
+  for (const r of rows.slice(1)) {
+    const name = (r[nameI] || "").trim();
+    if (!name) continue;
+    const genre = genreI >= 0 ? (r[genreI] || "").trim() : "";
+    if (dupArtist(name)) skipped.push(name);
+    else added.push({ name, genre });
+  }
+  return { added, skipped };
+}
+
+function importArtistRows(rows) {
+  pushUndo("import artists");
+  for (const r of rows) addArtist({ name: r.name, genre: r.genre });
+}
+
 function updateArtist(id, patch) {
   const a = artistById(id);
   if (!a) return;
@@ -741,7 +780,7 @@ function renderSongs() {
         <button class="btn" data-act="open-meat" data-id="${ar.id}">Import meat</button>
         <button class="btn" data-act="open-song" data-id="${ar.id}">${icon("plus")} Meat</button>
       </div></div>
-      ${songs.length ? songList(songs) : emptyBox("No meat from this artist", "Listen through the catalog, then save the meat.", "Save meat", "open-song")}`;
+      ${songs.length ? songList(songs) : ""}`;
   }
   const rows = catalogArtists()
     .map((a) => ({ artist: a, cuts: songsOf(a.id).length }))
@@ -814,6 +853,14 @@ function renderSettings() {
         <button class="btn" data-act="restore">Restore backup</button>
         <input id="restore-file" class="hidden" type="file" accept="application/json,.json" />
       </div>
+    </div>
+    <h2 style="font-size:1.125rem;margin:2rem 0 .75rem">Spreadsheet</h2>
+    <div class="editor" style="margin:0">
+      <p class="help">Name and genre only. Skips artists already in the crate. Does not touch releases or meat.</p>
+      <div class="row-actions">
+        <button class="btn" data-act="import-artists-csv">Import artists CSV</button>
+        <input id="artists-csv" class="hidden" type="file" accept=".csv,text/csv" />
+      </div>
     </div>`;
 }
 
@@ -839,7 +886,8 @@ function renderArtist(id) {
        <button class="btn" data-act="del-artist" data-id="${a.id}">Delete</button>`
     : `<button class="btn" data-act="open-album" data-id="${a.id}">${icon("plus")} Release</button>
        <button class="btn" data-act="open-song" data-id="${a.id}">${icon("plus")} Meat</button>
-       <button class="btn" data-act="open-notes" data-id="${a.id}">Import</button>
+       <button class="btn" data-act="open-notes" data-id="${a.id}">Import releases</button>
+       <button class="btn" data-act="open-meat" data-id="${a.id}">Import meat</button>
        <button class="btn" data-act="edit-artist" data-id="${a.id}">Edit</button>
        <button class="btn" data-act="del-artist" data-id="${a.id}">Delete</button>
        <button class="btn" data-act="sucks-artist" data-id="${a.id}">Sucks</button>
@@ -859,8 +907,7 @@ function renderArtist(id) {
     ${a.sucks ? "" : `<p class="muted tabular" style="margin:.4rem 0 1rem">${catalogLine(a)}</p>`}
     <div class="row-actions" style="margin:1rem 0 2rem">${actions}</div>
     <h2 style="font-size:1.125rem;margin-bottom:.75rem">Releases</h2>${relHtml}
-    <h2 style="font-size:1.125rem;margin:2rem 0 .75rem">White Meat</h2>
-    ${meat.length ? songList(meat) : emptyBox("No meat from this artist", "Listen through the catalog, then save the meat.", a.sucks ? "" : "Save meat", "open-song")}`;
+    ${meat.length ? `<h2 style="font-size:1.125rem;margin:2rem 0 .75rem">White Meat</h2>${songList(meat)}` : ""}`;
 }
 
 function renderAlbum(id) {
@@ -1288,6 +1335,10 @@ function onClick(e) {
     $("#restore-file")?.click();
     return;
   }
+  if (act === "import-artists-csv") {
+    $("#artists-csv")?.click();
+    return;
+  }
 }
 
 function onChange(e) {
@@ -1302,6 +1353,23 @@ function onChange(e) {
       if (!snap) { toast("That file isn’t a White Meat backup"); return; }
       replaceCrate(snap);
       toast("Backup restored");
+      render();
+    });
+  }
+  if (e.target.id === "artists-csv") {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    file.text().then((raw) => {
+      const parsed = parseArtistCsv(raw);
+      if (parsed.error) { toast(parsed.error); return; }
+      if (!parsed.added.length) {
+        toast(parsed.skipped.length ? "Already in the catalog" : "Nothing new to import");
+        return;
+      }
+      importArtistRows(parsed.added);
+      const extra = parsed.skipped.length ? ` · ${parsed.skipped.length} already in the crate` : "";
+      toast(`Imported ${parsed.added.length} ${parsed.added.length === 1 ? "artist" : "artists"}${extra}`, true);
       render();
     });
   }
