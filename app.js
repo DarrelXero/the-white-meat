@@ -626,12 +626,17 @@ function searchHay(q) {
   return { artists, releases, meat, sucks };
 }
 
+function backupFilename(d = new Date()) {
+  const pad = (n) => String(n).padStart(2, "0");
+  return `the-white-meat-${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}.json`;
+}
+
 function downloadBackup() {
   const blob = new Blob([serializeCrate(state)], { type: "application/json" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `the-white-meat-${new Date().toISOString().slice(0, 10)}.json`;
+  a.download = backupFilename();
   a.rel = "noopener";
   document.body.appendChild(a);
   a.click();
