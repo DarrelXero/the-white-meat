@@ -2,8 +2,6 @@
 
 A listening crate. Pick an artist, work through every album, EP, and non-album single, and keep the songs that matter (the white meat). Artists you will not listen through go in Sucks.
 
-This is a rebuild of the grok.me app after that workshop was wiped. Your catalog lives in this browser only until you download a backup.
-
 ## Open it
 
 If someone sent you a link, use that.
